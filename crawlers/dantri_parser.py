@@ -1,6 +1,5 @@
-# crawlers/dantri_parser.py
+# crawlers/dantri_parser.py (phiên bản đã sửa)
 
-import json
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import pytz
@@ -8,63 +7,55 @@ import pytz
 def parse_dantri_articles(html_content: str) -> list:
     """
     Phân tích nội dung HTML từ trang Dân trí để lấy các bài viết mới.
-
-    Args:
-        html_content (str): Chuỗi chứa nội dung HTML của trang web.
-
-    Returns:
-        list: Danh sách các bài viết được đăng trong vòng 2 giờ qua.
     """
     soup = BeautifulSoup(html_content, 'lxml')
     results = []
     base_url = 'https://dantri.com.vn'
-    
+
     vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
     now = datetime.now(vietnam_tz)
     two_hours_ago = now - timedelta(hours=2)
 
     article_blocks = soup.find_all('article', class_='article-item')
-    if not article_blocks:
-        return []
 
     for block in article_blocks:
         try:
             title_tag = block.find('h3', class_='article-title')
             link_tag = title_tag.find('a') if title_tag else None
-            
-            data_track_content = block.get('data-track-content')
-            if not data_track_content:
+            time_tag = block.find('time') # Tìm thẻ time
+
+            if not link_tag or 'href' not in link_tag.attrs or not time_tag or 'datetime' not in time_tag.attrs:
                 continue
 
-            parts = data_track_content.split('-')
-            timestamp_str_with_ext = parts[-1]
-            timestamp_str = timestamp_str_with_ext.split('.')[0]
+            link = link_tag['href'].strip()
+            title = link_tag.get_text(strip=True)
 
-            if len(timestamp_str) < 14:
-                continue
+            # Lấy chuỗi thời gian từ thuộc tính datetime của thẻ <time>
+            datetime_str = time_tag['datetime']
+            # Chuyển chuỗi thời gian thành đối tượng datetime
+            # Định dạng có thể là "2025-07-29T09:47:28+07:00", nên cần xử lý phù hợp
+            publish_date = datetime.fromisoformat(datetime_str)
 
-            if link_tag and 'href' in link_tag.attrs:
-                link = link_tag['href'].strip()
-                title = link_tag.get_text(strip=True)
+            # Chuyển về múi giờ Việt Nam nếu chưa có
+            if publish_date.tzinfo is None:
+                publish_date = vietnam_tz.localize(publish_date)
 
+            if two_hours_ago <= publish_date <= now:
                 if not link.startswith('http'):
                     link = base_url + link
 
-                publish_date_naive = datetime.strptime(timestamp_str[:14], "%Y%m%d%H%M%S")
-                publish_date = vietnam_tz.localize(publish_date_naive)
-                
-                if two_hours_ago <= publish_date <= now:
-                    formatted_publish_time = publish_date.strftime('%d/%m/%Y, %H:%M:%S')
-                    results.append({
-                        'link': link,
-                        'title': title,
-                        'publish_time': formatted_publish_time
-                    })
+                formatted_publish_time = publish_date.strftime('%d/%m/%Y, %H:%M:%S')
+                results.append({
+                    'link': link,
+                    'title': title,
+                    'publish_time': formatted_publish_time
+                })
 
         except (AttributeError, ValueError, IndexError) as e:
             print(f"Lỗi khi xử lý một khối bài viết của Dân Trí: {e}")
             continue
-            
+
+    # Loại bỏ các bài viết trùng lặp
     unique_results = []
     seen_links = set()
     for item in results:
