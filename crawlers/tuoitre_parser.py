@@ -6,7 +6,7 @@ import pytz
 def parse_tuoitre_articles(html_content: str) -> list:
     """
     Phân tích nội dung HTML từ trang Tuổi Trẻ Online để lấy các bài viết
-    được đăng trong vòng 2 giờ gần nhất.
+    được đăng trong vòng 2 giờ gần nhất bằng cách trích xuất thời gian từ URL.
     """
     if not html_content:
         return []
@@ -20,39 +20,36 @@ def parse_tuoitre_articles(html_content: str) -> list:
     now = datetime.now(vietnam_tz)
     two_hours_ago = now - timedelta(hours=2)
 
-    # --- Tìm tất cả các thẻ h2 và h3 có thuộc tính data-id ---
-    # Đây là các thẻ chứa tiêu đề và link của bài viết
-    article_headers = soup.find_all(['h2', 'h3'], attrs={'data-id': True})
-    
-    # Biểu thức chính quy (regex) để lấy 14 chữ số đầu tiên
-    time_pattern = re.compile(r'^(\d{14})')
+    # --- Tìm tất cả các link bài viết ---
+    # Các link này thường nằm trong các thẻ h2 hoặc h3
+    article_links = soup.select('h2 a[href], h3 a[href]')
 
-    for header in article_headers:
+    # Biểu thức chính quy (regex) để tìm chuỗi 14 chữ số ngay trước .htm
+    # Ví dụ: "...-2025072910363144.htm" -> sẽ khớp với "2025072910363144"
+    time_pattern = re.compile(r'(\d{14})\.htm$')
+
+    for link_tag in article_links:
         try:
-            link_tag = header.find('a', href=True)
-            if not link_tag:
-                continue
-
             link = link_tag['href'].strip()
             title = link_tag.get('title', '').strip() or link_tag.get_text(strip=True)
             
-            # Lấy chuỗi ID từ thuộc tính data-id
-            article_id = header.get('data-id', '')
-            
-            # Dùng regex để trích xuất chuỗi thời gian
-            match = time_pattern.search(article_id)
+            # Bỏ qua các link không phải bài viết (ví dụ: link tới chuyên mục)
+            if not link.endswith('.htm'):
+                continue
+
+            # Dùng regex để tìm chuỗi thời gian trong link
+            match = time_pattern.search(link)
             if not match:
                 continue
             
             datetime_str = match.group(1)
             publish_date = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
             
-            # Gán múi giờ Việt Nam cho thời gian vừa trích xuất
+            # Gán múi giờ Việt Nam
             publish_date = vietnam_tz.localize(publish_date)
 
             # So sánh thời gian
             if two_hours_ago <= publish_date <= now:
-                # Hoàn thiện URL nếu nó là đường dẫn tương đối
                 if not link.startswith('http'):
                     link = base_url + link
                 
@@ -65,10 +62,10 @@ def parse_tuoitre_articles(html_content: str) -> list:
                 })
 
         except Exception as e:
-            print(f"Bỏ qua một khối bài viết của Tuổi Trẻ do lỗi: {e}")
+            print(f"Bỏ qua một link của Tuổi Trẻ do lỗi: {e}")
             continue
 
-    # Loại bỏ các bài viết trùng lặp vì có thể xuất hiện ở nhiều mục
+    # Loại bỏ các bài viết trùng lặp
     unique_results = []
     seen_links = set()
     for item in results:
