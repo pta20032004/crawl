@@ -6,7 +6,14 @@ import pytz
 def parse_tuoitre_articles(html_content: str) -> list:
     """
     Phân tích nội dung HTML từ trang Tuổi Trẻ Online để lấy các bài viết
-    được đăng trong vòng 2 giờ gần nhất bằng cách trích xuất thời gian từ URL.
+    được đăng trong vòng 2 giờ gần nhất.
+
+    Args:
+        html_content: Chuỗi chứa nội dung HTML của trang web.
+
+    Returns:
+        Một danh sách các dictionary, mỗi dictionary chứa thông tin 
+        về một bài viết (title, link, publish_time).
     """
     if not html_content:
         return []
@@ -18,26 +25,23 @@ def parse_tuoitre_articles(html_content: str) -> list:
     # --- Thiết lập múi giờ và thời gian ---
     vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
     now = datetime.now(vietnam_tz)
+    # --- Logic đã cập nhật: Tìm trong vòng 2 giờ ---
     two_hours_ago = now - timedelta(hours=2)
 
-    # --- Tìm tất cả các link bài viết ---
-    # Các link này thường nằm trong các thẻ h2 hoặc h3
-    article_links = soup.select('h2 a[href], h3 a[href]')
+    # --- Logic đã cập nhật: Tìm tất cả các thẻ <a> để không bỏ sót ---
+    article_links = soup.find_all('a', href=True)
 
-    # Biểu thức chính quy (regex) để tìm chuỗi 14 chữ số ngay trước .htm
-    # Ví dụ: "...-2025072910363144.htm" -> sẽ khớp với "2025072910363144"
-    time_pattern = re.compile(r'(\d{14})\.htm$')
+    # --- Logic đã cập nhật: Regex linh hoạt hơn ---
+    time_pattern = re.compile(r'-(\d{14})\d*\.htm')
 
     for link_tag in article_links:
         try:
-            link = link_tag['href'].strip()
+            link = link_tag.get('href', '').strip()
             title = link_tag.get('title', '').strip() or link_tag.get_text(strip=True)
             
-            # Bỏ qua các link không phải bài viết (ví dụ: link tới chuyên mục)
-            if not link.endswith('.htm'):
+            if not link.endswith('.htm') or not title:
                 continue
 
-            # Dùng regex để tìm chuỗi thời gian trong link
             match = time_pattern.search(link)
             if not match:
                 continue
@@ -45,10 +49,9 @@ def parse_tuoitre_articles(html_content: str) -> list:
             datetime_str = match.group(1)
             publish_date = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
             
-            # Gán múi giờ Việt Nam
             publish_date = vietnam_tz.localize(publish_date)
 
-            # So sánh thời gian
+            # So sánh thời gian trong vòng 2 giờ
             if two_hours_ago <= publish_date <= now:
                 if not link.startswith('http'):
                     link = base_url + link
@@ -62,10 +65,11 @@ def parse_tuoitre_articles(html_content: str) -> list:
                 })
 
         except Exception as e:
-            print(f"Bỏ qua một link của Tuổi Trẻ do lỗi: {e}")
+            # Bỏ qua nếu có lỗi ở một link và tiếp tục với các link khác
+            # print(f"Bỏ qua link '{link}' do lỗi: {e}")
             continue
 
-    # Loại bỏ các bài viết trùng lặp
+    # Loại bỏ các bài viết trùng lặp link
     unique_results = []
     seen_links = set()
     for item in results:
@@ -74,3 +78,28 @@ def parse_tuoitre_articles(html_content: str) -> list:
             seen_links.add(item['link'])
             
     return unique_results
+
+# --- Ví dụ cách sử dụng ---
+if __name__ == '__main__':
+    # Để chạy thử, bạn cần tạo file 'test_page.html' 
+    # và dán nội dung HTML của trang Tuổi Trẻ vào đó.
+    try:
+        with open('test_page.html', 'r', encoding='utf-8') as f:
+            sample_html = f.read()
+            
+        # Tiền xử lý nếu cần (ví dụ: file có ký tự lỗi)
+        sample_html = sample_html.replace('\\"', '"')
+
+        articles = parse_tuoitre_articles(sample_html)
+        
+        print(f"Tìm thấy {len(articles)} bài viết trong vòng 2 giờ qua:")
+        print("----------------------------------------------------")
+        for article in articles:
+            print(f"Tiêu đề: {article['title']}")
+            print(f"Link: {article['link']}")
+            print(f"Thời gian: {article['publish_time']}\n")
+
+    except FileNotFoundError:
+        print("Vui lòng tạo file 'test_page.html' để chạy ví dụ.")
+    except Exception as e:
+        print(f"Đã xảy ra lỗi: {e}")
