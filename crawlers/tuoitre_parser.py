@@ -1,65 +1,79 @@
-# crawlers/tuoitre_parser.py
-
 import re
-from datetime import datetime, timedelta, timezone
 from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
+import pytz
 
 def parse_tuoitre_articles(html_content: str) -> list:
     """
-    Trích xuất các bài viết mới từ HTML của báo Tuổi Trẻ bằng BeautifulSoup.
+    Phân tích nội dung HTML từ trang Tuổi Trẻ Online để lấy các bài viết
+    được đăng trong vòng 2 giờ gần nhất.
     """
     if not html_content:
         return []
 
     soup = BeautifulSoup(html_content, 'lxml')
     results = []
-    unique_links = set()
     base_url = 'https://tuoitre.vn'
+    
+    # --- Thiết lập múi giờ và thời gian ---
+    vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
+    now = datetime.now(vietnam_tz)
+    two_hours_ago = now - timedelta(hours=2)
 
-    tz_vietnam = timezone(timedelta(hours=7))
-    now_utc = datetime.now(timezone.utc)
-    two_hours_ago = now_utc - timedelta(hours=2)
+    # --- Tìm tất cả các thẻ h2 và h3 có thuộc tính data-id ---
+    # Đây là các thẻ chứa tiêu đề và link của bài viết
+    article_headers = soup.find_all(['h2', 'h3'], attrs={'data-id': True})
+    
+    # Biểu thức chính quy (regex) để lấy 14 chữ số đầu tiên
+    time_pattern = re.compile(r'^(\d{14})')
 
-    article_links = soup.find_all('a', class_='box-category-link-title')
-
-    for link_tag in article_links:
+    for header in article_headers:
         try:
-            relative_link = link_tag.get('href')
-            title = link_tag.get('title', link_tag.get_text(strip=True))
-
-            if not relative_link or not title:
+            link_tag = header.find('a', href=True)
+            if not link_tag:
                 continue
 
-            match = re.search(r'-(\d{17})\.htm', relative_link)
+            link = link_tag['href'].strip()
+            title = link_tag.get('title', '').strip() or link_tag.get_text(strip=True)
+            
+            # Lấy chuỗi ID từ thuộc tính data-id
+            article_id = header.get('data-id', '')
+            
+            # Dùng regex để trích xuất chuỗi thời gian
+            match = time_pattern.search(article_id)
             if not match:
                 continue
-
-            timestamp_str = match.group(1)
-            publish_time_str = timestamp_str[:14]
-            publish_date = datetime.strptime(publish_time_str, '%Y%m%d%H%M%S')
             
-            publish_date_aware = publish_date.replace(tzinfo=tz_vietnam)
-            publish_date_utc = publish_date_aware.astimezone(timezone.utc)
+            datetime_str = match.group(1)
+            publish_date = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
             
-            if publish_date_utc >= two_hours_ago:
-                full_link = base_url + relative_link
+            # Gán múi giờ Việt Nam cho thời gian vừa trích xuất
+            publish_date = vietnam_tz.localize(publish_date)
 
-                if full_link in unique_links:
-                    continue
+            # So sánh thời gian
+            if two_hours_ago <= publish_date <= now:
+                # Hoàn thiện URL nếu nó là đường dẫn tương đối
+                if not link.startswith('http'):
+                    link = base_url + link
                 
-                unique_links.add(full_link)
-                formatted_publish_time = publish_date_aware.strftime('%d/%m/%Y %H:%M:%S')
-
+                formatted_publish_time = publish_date.strftime('%H:%M:%S %d/%m/%Y')
+                
                 results.append({
-                    'link': full_link,
-                    'title': title.strip(),
+                    'title': title,
+                    'link': link,
                     'publish_time': formatted_publish_time
                 })
 
-        except (ValueError, IndexError) as e:
-            print(f"Lỗi khi xử lý link của Tuổi Trẻ '{relative_link}': {e}")
+        except Exception as e:
+            print(f"Bỏ qua một khối bài viết của Tuổi Trẻ do lỗi: {e}")
             continue
 
-    results.sort(key=lambda x: datetime.strptime(x['publish_time'], '%d/%m/%Y %H:%M:%S'), reverse=True)
-    return results
-
+    # Loại bỏ các bài viết trùng lặp vì có thể xuất hiện ở nhiều mục
+    unique_results = []
+    seen_links = set()
+    for item in results:
+        if item['link'] not in seen_links:
+            unique_results.append(item)
+            seen_links.add(item['link'])
+            
+    return unique_results
